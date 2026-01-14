@@ -1,126 +1,115 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from openpyxl import load_workbook
-import os
 from datetime import datetime
 from fpdf import FPDF
 
-# --- 1. KONFIGURASI & FUNGSI ---
-FILE_EXCEL = "database.xlsx"
+# --- 1. KONFIGURASI ---
+st.set_page_config(page_title="Kas Koperasi Online", layout="wide")
+st.title("🌐 Buku Kas Koperasi Online (Google Sheets)")
 
+# MASUKKAN LINK GOOGLE SHEETS ANDA DI SINI
+URL_SHEET = "https://docs.google.com/spreadsheets/d/1Os8nf0ourPsn1Rzt0yiMylNUX8Rkh1WwIjK736atMiU/edit?usp=sharing"
+
+# Koneksi ke Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# --- 2. FUNGSI PDF ---
 def export_to_pdf(dataframe):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "LAPORAN BUKU KAS KOPERASI", ln=True, align='C')
-    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 7, "KOPERASI KONSUMEN PENGAYOMAN LAPAS ARGAMAKMUR", ln=True, align='C')
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(0, 7, "LAPORAN BUKU KAS ONLINE", ln=True, align='C')
+    pdf.ln(5)
     
-    # Lebar kolom disesuaikan dengan kertas Landscape
+    # Lebar kolom & Header
     widths = [25, 30, 35, 85, 30, 30, 35] 
     headers = ["Bulan", "Tanggal", "No Bukti", "Keterangan", "Debit", "Kredit", "Saldo"]
-
-    pdf.set_fill_color(200, 220, 255)
-    pdf.set_font("Arial", 'B', 10)
+    
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_font("Arial", 'B', 9)
     for i, h in enumerate(headers):
-        pdf.cell(widths[i], 10, h, border=1, fill=True, align='C')
+        pdf.cell(widths[i], 8, h, border=1, fill=True, align='C')
     pdf.ln()
     
     pdf.set_font("Arial", size=9)
     for index, row in dataframe.iterrows():
         fill = index % 2 == 0
-        pdf.set_fill_color(245, 245, 245)
-        # Ambil data 7 kolom pertama (0 sampai 6)
+        pdf.set_fill_color(250, 250, 250)
         for j in range(7):
             val = str(row.iloc[j]) if pd.notnull(row.iloc[j]) else ""
-            # Format angka untuk kolom E, F, G (indeks 4, 5, 6)
-            if j >= 4:
-                try:
-                    val_num = float(val)
-                    val = f"{val_num:,.0f}"
-                except:
-                    val = "0"
-                pdf.cell(widths[j], 8, val, border=1, fill=fill, align='R')
+            if j >= 4: # Kolom Angka
+                try: val = f"{float(val):,.0f}"
+                except: val = "0"
+                pdf.cell(widths[j], 7, val, border=1, fill=fill, align='R')
             else:
-                pdf.cell(widths[j], 8, val[:45], border=1, fill=fill)
+                pdf.cell(widths[j], 7, val[:45], border=1, fill=fill)
         pdf.ln()
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 2. TAMPILAN UTAMA ---
-st.set_page_config(page_title="Input Kas Koperasi", layout="wide")
-st.title("📖 Form Buku Kas Koperasi")
-
-# Form Input
-with st.form("form_kas", clear_on_submit=True):
-    col1, col2 = st.columns(2)
-    with col1:
+# --- 3. FORM INPUT ---
+with st.form("form_online"):
+    c1, c2 = st.columns(2)
+    with c1:
         tgl = st.date_input("Tanggal", datetime.now())
-        no_bukti = st.text_input("No. Bukti")
-        keterangan = st.text_input("Keterangan")
-    with col2:
+        bukti = st.text_input("No. Bukti")
+        ket = st.text_input("Keterangan")
+    with c2:
         jenis = st.selectbox("Jenis", ["Debit", "Kredit"])
         nominal = st.number_input("Nominal", min_value=0)
     
-    submit = st.form_submit_button("Simpan ke Excel")
+    submit = st.form_submit_button("Simpan ke Google Sheets")
 
-# Logika Simpan (Hanya dijalankan saat tombol ditekan)
 if submit:
-    if os.path.exists(FILE_EXCEL):
-        wb = load_workbook(FILE_EXCEL)
-        ws = wb.active
-        row = 7
-        while ws[f"B{row}"].value is not None: row += 1
+    try:
+        # Baca data lama (skiprows disesuaikan dengan struktur sheet Anda)
+        df_old = conn.read(spreadsheet=URL_SHEET, skiprows=5)
         
-        ws[f"A{row}"] = tgl.strftime("%B")
-        ws[f"B{row}"] = tgl.strftime("%d/%m/%Y")
-        ws[f"C{row}"] = no_bukti
-        ws[f"D{row}"] = keterangan
-        ws[f"E{row}"] = nominal if jenis == "Debit" else 0
-        ws[f"F{row}"] = nominal if jenis == "Kredit" else 0
+        # Logika Saldo
+        last_saldo = df_old.iloc[-1, 6] if not df_old.empty else 0
+        deb = nominal if jenis == "Debit" else 0
+        kre = nominal if jenis == "Kredit" else 0
         
-        saldo_ats = ws[f"G{row-1}"].value if row > 7 else 0
-        if not isinstance(saldo_ats, (int, float)): saldo_ats = 0
-        ws[f"G{row}"] = saldo_ats + ws[f"E{row}"].value - ws[f"F{row}"].value
+        new_row = pd.DataFrame([{
+            "Bulan": tgl.strftime("%B"),
+            "Tanggal": tgl.strftime("%d/%m/%Y"),
+            "No Bukti": bukti,
+            "Keterangan": ket,
+            "Debit": deb,
+            "Kredit": kre,
+            "Saldo": float(last_saldo) + deb - kre
+        }])
         
-        wb.save(FILE_EXCEL)
-        st.success("Data Berhasil Disimpan!")
-        st.rerun() # Refresh agar tabel di bawah langsung update
+        updated_df = pd.concat([df_old, new_row], ignore_index=True)
+        conn.update(spreadsheet=URL_SHEET, data=updated_df)
+        st.success("Data Berhasil Sinkron ke Cloud!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Gagal Simpan: {e}")
 
-# --- 3. BAGIAN DOWNLOAD (DI LUAR FORM - AGAR SELALU MUNCUL) ---
+# --- 4. TOMBOL CETAK & PREVIEW (SELALU MUNCUL) ---
 st.divider()
-st.subheader("📥 Cetak & Unduh Laporan")
+st.subheader("📥 Cetak Laporan dari Cloud")
 
-if os.path.exists(FILE_EXCEL):
-    # Membaca data untuk preview dan PDF
-    # Gunakan header=None karena kita mulai dari baris 7 (data murni)
-    df_data = pd.read_excel(FILE_EXCEL, skiprows=6, header=None)
+try:
+    # Selalu ambil data terbaru untuk preview dan download
+    data_cloud = conn.read(spreadsheet=URL_SHEET, skiprows=5)
     
-    if not df_data.empty:
-        col_pdf, col_xlsx = st.columns(2)
+    if not data_cloud.empty:
+        col_pdf, col_link = st.columns(2)
         
         with col_pdf:
-            try:
-                pdf_output = export_to_pdf(df_data)
-                st.download_button(
-                    label="📄 Unduh PDF",
-                    data=pdf_output,
-                    file_name="Laporan_Kas_Koperasi.pdf",
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.error(f"Gagal menyiapkan PDF: {e}")
-        
-        with col_xlsx:
-            with open(FILE_EXCEL, "rb") as f:
-                st.download_button(
-                    label="Excel (.xlsx)",
-                    data=f,
-                    file_name="Buku_Kas_Koperasi.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        
-        st.write("Preview Data Terakhir:")
-        st.dataframe(df_data.tail(10))
+            pdf_bytes = export_to_pdf(data_cloud)
+            st.download_button("📄 Unduh PDF Laporan", pdf_bytes, "Laporan_Kas_Online.pdf", "application/pdf")
+            
+        with col_link:
+            st.link_button("📂 Buka Google Sheets", URL_SHEET)
+            
+        st.write("Preview 5 Data Terakhir:")
+        st.dataframe(data_cloud.tail(5))
     else:
-        st.info("Belum ada data di baris ke-7 dan seterusnya.")
-else:
-    st.warning("File database.xlsx belum ditemukan di folder.")
+        st.info("Belum ada data di Google Sheets.")
+except Exception as e:
+    st.warning("Pastikan Link Google Sheets sudah benar dan aksesnya 'Anyone with the link can edit'.")
