@@ -47,25 +47,51 @@ with st.form("form_online"):
 
 if submit:
     try:
-        # Baca data (Baris 5-6 adalah header, mulai baca data baris 7)
-        df_old = conn.read(skiprows=5, header=None)
+        # 1. Ambil data dari Google Sheets
+        # Kita baca mulai baris 5 agar judul terbaca sebagai header
+        df_old = conn.read(skiprows=4, ttl=0)
         
-        # Hitung Saldo
-        last_saldo = df_old.iloc[-1, 6] if not df_old.empty else 0
+        # 2. Pastikan data tidak kosong dan bersihkan baris yang isinya judul
+        # Menghapus baris jika kolom 'Saldo' berisi teks 'Saldo'
+        df_old = df_old[df_old.iloc[:, 6] != "Saldo"]
+        
+        # 3. Ambil Saldo Terakhir
+        if not df_old.empty:
+            # Ambil nilai dari baris terakhir, kolom ke-7 (indeks 6)
+            last_val = df_old.iloc[-1, 6]
+            # Paksa jadi angka, jika gagal (teks) jadikan 0
+            try:
+                last_saldo = float(last_val)
+            except:
+                last_saldo = 0
+        else:
+            last_saldo = 0
+            
+        # 4. Hitung Transaksi Baru
         deb = nominal if jenis == "Debit" else 0
         kre = nominal if jenis == "Kredit" else 0
+        new_saldo = last_saldo + deb - kre
         
-        new_row = pd.DataFrame([[
-            tgl.strftime("%B"), tgl.strftime("%d/%m/%Y"), bukti, ket, deb, kre, float(last_saldo) + deb - kre
-        ]])
+        # 5. Buat Baris Baru
+        new_row = pd.DataFrame([{
+            "Bulan": tgl.strftime("%B"),
+            "Tanggal": tgl.strftime("%d/%m/%Y"),
+            "No Bukti": bukti,
+            "Keterangan": ket,
+            "Debit": deb,
+            "Kredit": kre,
+            "Saldo": new_saldo
+        }])
         
-        # Update sheet (Tulis mulai dari baris setelah data terakhir)
-        conn.update(data=new_row) 
-        st.success("✅ Berhasil Disimpan!")
+        # 6. Gabungkan dan Kirim kembali ke Cloud
+        updated_df = pd.concat([df_old, new_row], ignore_index=True)
+        conn.update(data=updated_df)
+        
+        st.success("✅ Data Berhasil Disimpan!")
         st.rerun()
+        
     except Exception as e:
-        st.error(f"Error: {e}")
-
+        st.error(f"Terjadi kesalahan saat menghitung saldo: {e}")
 # --- DOWNLOAD & PREVIEW ---
 st.divider()
 try:
@@ -76,3 +102,4 @@ try:
         st.dataframe(data_cloud.tail(5))
 except:
     st.info("Menunggu data...")
+
